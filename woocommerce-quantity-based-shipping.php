@@ -14,7 +14,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 add_action( 'woocommerce_shipping_init', 'wc_quantity_based_shipping_init' );
 add_action( 'admin_menu', 'wc_quantity_based_shipping_admin_menu' );
 add_action( 'admin_init', 'wc_quantity_based_shipping_register_settings' );
-add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'wc_quantity_based_shipping_action_links' );
 
 function wc_quantity_based_shipping_init() {
     if ( ! class_exists( 'WC_Shipping_Method' ) ) {
@@ -106,8 +105,8 @@ function wc_quantity_based_shipping_init() {
                 return;
             }
 
-            $stored_rules = get_option( 'wc_qbs_rules', array() );
-            $rules        = $this->parse_rules( $stored_rules );
+            $rules_text = get_option( 'wc_qbs_rules', $this->get_option( 'rules', '' ) );
+            $rules      = $this->parse_rules( $rules_text );
             $cost       = 0;
 
             foreach ( $rules as $rule ) {
@@ -127,40 +126,27 @@ function wc_quantity_based_shipping_init() {
         /**
          * Parse tier rules.
          *
-         * @param array|string $rules_input Rules input.
+         * @param string $rules_text Rules text.
          * @return array
          */
-        private function parse_rules( $rules_input ) {
+        private function parse_rules( $rules_text ) {
             $rules = array();
-            $rows  = array();
+            $lines = preg_split( '/\r\n|\r|\n/', trim( $rules_text ) );
 
-            if ( is_array( $rules_input ) ) {
-                $rows = $rules_input;
-            } elseif ( is_string( $rules_input ) ) {
-                $lines = preg_split( '/\r\n|\r|\n/', trim( $rules_input ) );
-                foreach ( $lines as $line ) {
-                    $line = trim( $line );
-                    if ( '' === $line ) {
-                        continue;
-                    }
-
-                    $parts = array_map( 'trim', explode( ',', $line ) );
-                    if ( count( $parts ) < 3 ) {
-                        continue;
-                    }
-
-                    $rows[] = array(
-                        'min'  => $parts[0],
-                        'max'  => $parts[1],
-                        'cost' => $parts[2],
-                    );
+            foreach ( $lines as $line ) {
+                $line = trim( $line );
+                if ( '' === $line ) {
+                    continue;
                 }
-            }
 
-            foreach ( $rows as $row ) {
-                $min  = isset( $row['min'] ) ? intval( $row['min'] ) : 0;
-                $max  = isset( $row['max'] ) ? intval( $row['max'] ) : 0;
-                $cost = isset( $row['cost'] ) ? floatval( $row['cost'] ) : 0;
+                $parts = array_map( 'trim', explode( ',', $line ) );
+                if ( count( $parts ) < 3 ) {
+                    continue;
+                }
+
+                $min  = intval( $parts[0] );
+                $max  = intval( $parts[1] );
+                $cost = floatval( $parts[2] );
 
                 if ( $min <= 0 || $max <= 0 || $max < $min ) {
                     continue;
@@ -193,25 +179,9 @@ function wc_quantity_based_shipping_register_settings() {
         'wc_qbs_settings',
         'wc_qbs_rules',
         array(
-            'type'              => 'array',
+            'type'              => 'string',
             'sanitize_callback' => 'wc_quantity_based_shipping_sanitize_rules',
-            'default'           => array(
-                array(
-                    'min'  => 1,
-                    'max'  => 10,
-                    'cost' => 5,
-                ),
-                array(
-                    'min'  => 11,
-                    'max'  => 30,
-                    'cost' => 8,
-                ),
-                array(
-                    'min'  => 31,
-                    'max'  => 50,
-                    'cost' => 12,
-                ),
-            ),
+            'default'           => "1,10,5\n11,30,8\n31,50,12",
         )
     );
 
@@ -239,30 +209,36 @@ function wc_quantity_based_shipping_register_settings() {
 /**
  * Sanitize tier rules input.
  *
- * @param array $value Raw rules.
- * @return array
+ * @param string $value Raw rules.
+ * @return string
  */
 function wc_quantity_based_shipping_sanitize_rules( $value ) {
+    $lines = preg_split( '/\r\n|\r|\n/', (string) $value );
     $clean = array();
-    $rows  = is_array( $value ) ? $value : array();
 
-    foreach ( $rows as $row ) {
-        $min  = isset( $row['min'] ) ? absint( $row['min'] ) : 0;
-        $max  = isset( $row['max'] ) ? absint( $row['max'] ) : 0;
-        $cost = isset( $row['cost'] ) ? floatval( $row['cost'] ) : 0;
+    foreach ( $lines as $line ) {
+        $line = trim( $line );
+        if ( '' === $line ) {
+            continue;
+        }
+
+        $parts = array_map( 'trim', explode( ',', $line ) );
+        if ( count( $parts ) < 3 ) {
+            continue;
+        }
+
+        $min  = absint( $parts[0] );
+        $max  = absint( $parts[1] );
+        $cost = floatval( $parts[2] );
 
         if ( $min <= 0 || $max <= 0 || $max < $min ) {
             continue;
         }
 
-        $clean[] = array(
-            'min'  => $min,
-            'max'  => $max,
-            'cost' => $cost,
-        );
+        $clean[] = $min . ',' . $max . ',' . $cost;
     }
 
-    return $clean;
+    return implode( "\n", $clean );
 }
 
 /**
@@ -280,43 +256,9 @@ function wc_quantity_based_shipping_admin_menu() {
 }
 
 /**
- * Add a settings link on the Plugins screen.
- *
- * @param array $links Action links.
- * @return array
- */
-function wc_quantity_based_shipping_action_links( $links ) {
-    $settings_url = admin_url( 'admin.php?page=wc-quantity-based-shipping' );
-    $settings     = '<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Settings', 'wc-quantity-based-shipping' ) . '</a>';
-    array_unshift( $links, $settings );
-    return $links;
-}
-
-/**
  * Render settings page.
  */
 function wc_quantity_based_shipping_render_settings_page() {
-    $default_rules = array(
-        array(
-            'min'  => 1,
-            'max'  => 10,
-            'cost' => 5,
-        ),
-        array(
-            'min'  => 11,
-            'max'  => 30,
-            'cost' => 8,
-        ),
-        array(
-            'min'  => 31,
-            'max'  => 50,
-            'cost' => 12,
-        ),
-    );
-    $rules = get_option( 'wc_qbs_rules', $default_rules );
-    if ( empty( $rules ) ) {
-        $rules = $default_rules;
-    }
     ?>
     <div class="wrap">
         <h1><?php echo esc_html__( 'Quantity Based Shipping', 'wc-quantity-based-shipping' ); ?></h1>
@@ -341,38 +283,8 @@ function wc_quantity_based_shipping_render_settings_page() {
                             <label for="wc_qbs_rules"><?php echo esc_html__( 'Tier rules', 'wc-quantity-based-shipping' ); ?></label>
                         </th>
                         <td>
-                            <table class="widefat striped" id="wc-qbs-rules-table">
-                                <thead>
-                                    <tr>
-                                        <th><?php echo esc_html__( 'Min quantity', 'wc-quantity-based-shipping' ); ?></th>
-                                        <th><?php echo esc_html__( 'Max quantity', 'wc-quantity-based-shipping' ); ?></th>
-                                        <th><?php echo esc_html__( 'Shipping cost', 'wc-quantity-based-shipping' ); ?></th>
-                                        <th><?php echo esc_html__( 'Actions', 'wc-quantity-based-shipping' ); ?></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ( $rules as $index => $rule ) : ?>
-                                        <tr>
-                                            <td>
-                                                <input type="number" min="1" step="1" name="wc_qbs_rules[<?php echo esc_attr( $index ); ?>][min]" value="<?php echo esc_attr( isset( $rule['min'] ) ? $rule['min'] : '' ); ?>">
-                                            </td>
-                                            <td>
-                                                <input type="number" min="1" step="1" name="wc_qbs_rules[<?php echo esc_attr( $index ); ?>][max]" value="<?php echo esc_attr( isset( $rule['max'] ) ? $rule['max'] : '' ); ?>">
-                                            </td>
-                                            <td>
-                                                <input type="number" min="0" step="0.01" name="wc_qbs_rules[<?php echo esc_attr( $index ); ?>][cost]" value="<?php echo esc_attr( isset( $rule['cost'] ) ? $rule['cost'] : '' ); ?>">
-                                            </td>
-                                            <td>
-                                                <button type="button" class="button wc-qbs-remove-row"><?php echo esc_html__( 'Remove', 'wc-quantity-based-shipping' ); ?></button>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                            <p>
-                                <button type="button" class="button" id="wc-qbs-add-row"><?php echo esc_html__( 'Add rule', 'wc-quantity-based-shipping' ); ?></button>
-                            </p>
-                            <p class="description"><?php echo esc_html__( 'Add tier rules using the table above. Shipping costs use the store currency settings (WooCommerce > Settings > Currency).', 'wc-quantity-based-shipping' ); ?></p>
+                            <textarea name="wc_qbs_rules" id="wc_qbs_rules" class="large-text code" rows="6"><?php echo esc_textarea( get_option( 'wc_qbs_rules', "1,10,5\n11,30,8\n31,50,12" ) ); ?></textarea>
+                            <p class="description"><?php echo esc_html__( 'One rule per line in the format: min,max,cost. Example: 1,10,5', 'wc-quantity-based-shipping' ); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -389,40 +301,5 @@ function wc_quantity_based_shipping_render_settings_page() {
             <?php submit_button(); ?>
         </form>
     </div>
-    <script>
-        (function () {
-            var table = document.getElementById('wc-qbs-rules-table');
-            var addButton = document.getElementById('wc-qbs-add-row');
-            if (!table || !addButton) {
-                return;
-            }
-
-            var getNextIndex = function () {
-                var rows = table.querySelectorAll('tbody tr');
-                return rows.length;
-            };
-
-            addButton.addEventListener('click', function () {
-                var index = getNextIndex();
-                var row = document.createElement('tr');
-                row.innerHTML =
-                    '<td><input type="number" min="1" step="1" name="wc_qbs_rules[' + index + '][min]" value=""></td>' +
-                    '<td><input type="number" min="1" step="1" name="wc_qbs_rules[' + index + '][max]" value=""></td>' +
-                    '<td><input type="number" min="0" step="0.01" name="wc_qbs_rules[' + index + '][cost]" value=""></td>' +
-                    '<td><button type="button" class="button wc-qbs-remove-row"><?php echo esc_html__( 'Remove', 'wc-quantity-based-shipping' ); ?></button></td>';
-                table.querySelector('tbody').appendChild(row);
-            });
-
-            table.addEventListener('click', function (event) {
-                if (event.target && event.target.classList.contains('wc-qbs-remove-row')) {
-                    event.preventDefault();
-                    var row = event.target.closest('tr');
-                    if (row) {
-                        row.remove();
-                    }
-                }
-            });
-        })();
-    </script>
     <?php
 }
