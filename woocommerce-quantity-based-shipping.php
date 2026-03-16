@@ -259,6 +259,33 @@ function wc_quantity_based_shipping_admin_menu() {
  * Render settings page.
  */
 function wc_quantity_based_shipping_render_settings_page() {
+    $raw_rules = get_option( 'wc_qbs_rules', "1,10,5\n11,30,8\n31,50,12" );
+    $rules     = array();
+    $lines     = preg_split( '/\r\n|\r|\n/', trim( (string) $raw_rules ) );
+
+    foreach ( $lines as $line ) {
+        $line  = trim( $line );
+        $parts = array_map( 'trim', explode( ',', $line ) );
+
+        if ( '' === $line || count( $parts ) < 3 ) {
+            continue;
+        }
+
+        $min  = absint( $parts[0] );
+        $max  = absint( $parts[1] );
+        $cost = floatval( $parts[2] );
+
+        if ( $min <= 0 || $max <= 0 || $max < $min ) {
+            continue;
+        }
+
+        $rules[] = array(
+            'min'  => $min,
+            'max'  => $max,
+            'cost' => $cost,
+        );
+    }
+
     ?>
     <div class="wrap">
         <h1><?php echo esc_html__( 'Quantity Based Shipping', 'wc-quantity-based-shipping' ); ?></h1>
@@ -283,8 +310,46 @@ function wc_quantity_based_shipping_render_settings_page() {
                             <label for="wc_qbs_rules"><?php echo esc_html__( 'Tier rules', 'wc-quantity-based-shipping' ); ?></label>
                         </th>
                         <td>
-                            <textarea name="wc_qbs_rules" id="wc_qbs_rules" class="large-text code" rows="6"><?php echo esc_textarea( get_option( 'wc_qbs_rules', "1,10,5\n11,30,8\n31,50,12" ) ); ?></textarea>
-                            <p class="description"><?php echo esc_html__( 'One rule per line in the format: min,max,cost. Example: 1,10,5', 'wc-quantity-based-shipping' ); ?></p>
+                            <style>
+                                #wc-qbs-rules-table td {
+                                    vertical-align: middle;
+                                }
+
+                                #wc-qbs-rules-table input[type="number"] {
+                                    width: 100%;
+                                }
+                            </style>
+                            <table class="widefat striped" id="wc-qbs-rules-table">
+                                <thead>
+                                    <tr>
+                                        <th><?php echo esc_html__( 'Min quantity', 'wc-quantity-based-shipping' ); ?></th>
+                                        <th><?php echo esc_html__( 'Max quantity', 'wc-quantity-based-shipping' ); ?></th>
+                                        <th><?php echo esc_html__( 'Shipping cost', 'wc-quantity-based-shipping' ); ?></th>
+                                        <th><?php echo esc_html__( 'Actions', 'wc-quantity-based-shipping' ); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if ( empty( $rules ) ) : ?>
+                                        <tr class="wc-qbs-rules-empty">
+                                            <td colspan="4"><?php echo esc_html__( 'No rules yet. Click "Add rule" to create your first tier.', 'wc-quantity-based-shipping' ); ?></td>
+                                        </tr>
+                                    <?php else : ?>
+                                        <?php foreach ( $rules as $rule ) : ?>
+                                            <tr>
+                                                <td><input type="number" min="1" step="1" value="<?php echo esc_attr( $rule['min'] ); ?>"></td>
+                                                <td><input type="number" min="1" step="1" value="<?php echo esc_attr( $rule['max'] ); ?>"></td>
+                                                <td><input type="number" min="0" step="0.01" value="<?php echo esc_attr( $rule['cost'] ); ?>"></td>
+                                                <td><button type="button" class="button wc-qbs-remove-row"><?php echo esc_html__( 'Remove', 'wc-quantity-based-shipping' ); ?></button></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                            <p>
+                                <button type="button" class="button" id="wc-qbs-add-row"><?php echo esc_html__( 'Add rule', 'wc-quantity-based-shipping' ); ?></button>
+                            </p>
+                            <p class="description"><?php echo esc_html__( 'Add tier rules using the table above. Shipping costs use the store currency settings (WooCommerce > Settings > Currency).', 'wc-quantity-based-shipping' ); ?></p>
+                            <textarea name="wc_qbs_rules" id="wc_qbs_rules" class="hidden" style="display:none;"><?php echo esc_textarea( (string) $raw_rules ); ?></textarea>
                         </td>
                     </tr>
                     <tr>
@@ -301,5 +366,86 @@ function wc_quantity_based_shipping_render_settings_page() {
             <?php submit_button(); ?>
         </form>
     </div>
+    <script>
+        (function () {
+            var table = document.getElementById('wc-qbs-rules-table');
+            var addButton = document.getElementById('wc-qbs-add-row');
+            var hiddenInput = document.getElementById('wc_qbs_rules');
+            if (!table || !addButton || !hiddenInput) {
+                return;
+            }
+
+            var serializeRules = function () {
+                var rows = table.querySelectorAll('tbody tr');
+                var lines = [];
+
+                rows.forEach(function (row) {
+                    if (row.classList.contains('wc-qbs-rules-empty')) {
+                        return;
+                    }
+
+                    var inputs = row.querySelectorAll('input');
+                    if (inputs.length < 3) {
+                        return;
+                    }
+
+                    var min = inputs[0].value.trim();
+                    var max = inputs[1].value.trim();
+                    var cost = inputs[2].value.trim();
+
+                    if (min && max && cost) {
+                        lines.push([min, max, cost].join(','));
+                    }
+                });
+
+                hiddenInput.value = lines.join('\n');
+            };
+
+            addButton.addEventListener('click', function () {
+                var row = document.createElement('tr');
+                row.innerHTML =
+                    '<td><input type="number" min="1" step="1" value=""></td>' +
+                    '<td><input type="number" min="1" step="1" value=""></td>' +
+                    '<td><input type="number" min="0" step="0.01" value=""></td>' +
+                    '<td><button type="button" class="button wc-qbs-remove-row"><?php echo esc_html__( 'Remove', 'wc-quantity-based-shipping' ); ?></button></td>';
+
+                var emptyRow = table.querySelector('.wc-qbs-rules-empty');
+                if (emptyRow) {
+                    emptyRow.remove();
+                }
+
+                table.querySelector('tbody').appendChild(row);
+                serializeRules();
+            });
+
+            table.addEventListener('click', function (event) {
+                if (!event.target || !event.target.classList.contains('wc-qbs-remove-row')) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                var row = event.target.closest('tr');
+                if (row) {
+                    row.remove();
+                }
+
+                if (!table.querySelector('tbody tr')) {
+                    var noRulesRow = document.createElement('tr');
+                    noRulesRow.className = 'wc-qbs-rules-empty';
+                    noRulesRow.innerHTML = '<td colspan="4"><?php echo esc_html__( 'No rules yet. Click "Add rule" to create your first tier.', 'wc-quantity-based-shipping' ); ?></td>';
+                    table.querySelector('tbody').appendChild(noRulesRow);
+                }
+
+                serializeRules();
+            });
+
+            table.addEventListener('input', function () {
+                serializeRules();
+            });
+
+            serializeRules();
+        })();
+    </script>
     <?php
 }
